@@ -1,27 +1,69 @@
 # Introduction
 
-This example is an extension of the firmware used on the [**USB-C Explorer**](https://github.com/ReclaimerLabs/USB-C-Explorer), which was a port of the [**Google Chrome EC library**](https://www.chromium.org/chromium-os/ec-development). This code is intended to show how to extend the library to new platforms, and provide a starting point for getting started with USB-C and Arduino. 
+This is a simple tool for sending and receiving USB-PD VDM messages using a FUSB302, based on [usb-c-arduino](https://github.com/graycatlabs/usb-c-arduino).
 
-# Notes and Limitations
-
-Running the USB-C Power Delivery stack can require some amount of RAM and processing power. I've tested this with the Arduino M0. I'm not sure something like the Arduino Uno is capable of running this code without some modiciations. Pull requests are always welcome. 
-
-The other major limitation is the power supplies on the Arduino. They don't seem to work well much above 12 V. When I tried 15 V, the Arduino M0 tended to draw too much current and get kicked off the power supply by the charger. If you want to go higher than 12 V, you will either need a power adapter or use something like the [**USB-C Explorer**](https://www.tindie.com/products/ReclaimerLabs/usb-c-explorer/). 
+USB-PD VDM documentation is [here](https://github.com/AsahiLinux/docs/wiki/Hardware:USB-PD)
 
 # Example Usage
 
-This code was tested with the [**FUSB302 breakout board**](https://www.tindie.com/products/ReclaimerLabs/usb-type-c-power-delivery-phy-breakout-board/). Here are the connections you will need. 
+You can use a breakout board or a bare [FUSB302](https://www.onsemi.com/pub/Collateral/FUSB302-D.PDF). You need to wire it as follows:
 
-* Breakout Pin -> Arduino Pin
-* GND -> GND
-* Vbus -> Vin
-* Vpu -> IOREF
-* VDD -> 3.3V
-* SDA -> SDA
-* SCL -> SCL
-* INT -> D12
-* GND -> GND (for good measure)
+* 1 CC2 → Type-C CC2 (B5) - ONLY wire this to a Type-C *socket* used with a cable. Otherwise leave open.
+* 2 VBUS → Type-C VBUS (A4/A9/B4/B9)
+* 3 VDD → Arduino 3.3V
+* 4 VDD ↑
+* 5 INT_N → Arduino D12
+* 6 SCL → Arduino A5
+* 7 SDA → Arduino A4
+* 8 GND → Arduino GND, Type-C GND (A1/A12/B1/B12)
+* 9 GND ↑
+* 10 CC1 → Type-C CC1 (A5)
+* 11 CC1 ↑
+* 12 VCONN output - leave open
+* 13 VCONN output - leave open
+* 14 CC2 - See pin 1 ↑
 
-# Questions, Comments, and Contributions
+You can get away without decoupling and with only connecting one of the duplicated pins. The exposed pad is NC.
 
-Pull requests are welcome. If you have questions or comments, you can email me directly at jason@reclaimerlabs.com. 
+# Interface
+
+By default the code will perform trivial (mostly hardcoded) USB-PD negotiation, then request to mux the debug UART over SBU1/SBU2. You can send custom VDMs using the Arduino serial terminal at 500000 baud.
+
+Sample session:
+
+```
+Device ID: 0x91
+Init
+STATUS0: 0x0
+IRQ: VBUSOK (VBUS=OFF)
+State: DISCONNECTED
+State: DISCONNECTED
+IRQ: VBUSOK (VBUS=ON)
+Connected: cc1=7 cc2=0
+Polarity: CC1 (normal)
+State: CONNECTED
+<SOURCE_CAP: 3F01912C
+>REQUEST
+<ACCEPT
+<PS_RDY
+<SOURCE_CAP: 3E019096
+>REQUEST
+<ACCEPT
+<PS_RDY
+<GET_SINK_CAP
+>SINK_CAP
+<VDM DISCOVER_IDENTITY
+>VDM DISCOVER_IDENTITY
+State: READY
+>VDM SET ACTION serial -> SBU1/2
+State: IDLE
+  input: "5AC8010\n"
+>VDM 5AC8010
+<VDM RX SOP'DEBUG (7) [724F] 5AC8050 46060606 2060301 3060106 1050303 8030809 1030000
+  input: "5AC8011,306\n"
+>VDM 5AC8011 306
+<VDM RX SOP'DEBUG (3) [344F] 5AC8051 187020C 800C0000
+  input: "5AC8012,1840306\n"
+>VDM 5AC8012 1840306
+<VDM RX SOP'DEBUG (5) [504F] 5AC8052 44740000 306 0 0
+```
