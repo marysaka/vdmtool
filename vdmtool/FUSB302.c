@@ -32,6 +32,7 @@ static struct fusb302_chip_state {
 void fusb302_pd_reset(int port)
 {
   tcpc_write(port, TCPC_REG_RESET, TCPC_REG_RESET_PD_RESET);
+  state[port].msgid = 0;
 }
 
 /*
