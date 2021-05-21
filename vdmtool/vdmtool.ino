@@ -496,8 +496,8 @@ void setup() {
   digitalWrite(debug_led_pin, LOW);
   vbus_off();
   
-  Wire.begin();
   Wire.setClock(400000);
+  Wire.begin();
 
   int reg;
   tcpc_read(0, TCPC_REG_DEVICE_ID, &reg);
