@@ -39,8 +39,8 @@ void vbus_off(void) {
 
 void vbus_on(void) {
   Serial.print("VBUS ON\n");
-  digitalWrite(vbus_pin, HIGH);
   pinMode(vbus_pin, OUTPUT);
+  digitalWrite(vbus_pin, HIGH);
 }
 
 void evt_dfpconnect(void) {
