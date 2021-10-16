@@ -21,6 +21,7 @@ enum state {
   STATE_READY,
   STATE_DFP_VBUS_ON,
   STATE_DFP_CONNECTED,
+  STATE_DFP_ACCEPT,
   STATE_IDLE,
 };
 
@@ -31,7 +32,7 @@ state st = STATE_DISCONNECTED;
 void vbus_off(void) {
   digitalWrite(vbus_pin, LOW);
 #ifdef DFP
-  delay(800);
+  //delay(800);
 #endif
   pinMode(vbus_pin, INPUT);
   Serial.print("VBUS OFF\n");
@@ -99,7 +100,7 @@ void evt_disconnect(void) {
   Serial.print("Disconnected\n");
   fusb302_pd_reset(0);
   fusb302_tcpm_set_rx_enable(0, 0);
-#ifdef DFP  
+#ifdef DFP
   fusb302_tcpm_select_rp_value(0, TYPEC_RP_USB);
   fusb302_tcpm_set_cc(0, TYPEC_CC_RP); // DFP mode
 #else
@@ -111,7 +112,7 @@ void evt_disconnect(void) {
 void send_power_request(uint32_t cap)
 {
   int hdr = PD_HEADER(PD_DATA_REQUEST, 0, 0, 0, 1, PD_REV20, 0);
-  uint32_t req = 
+  uint32_t req =
     (1L<<28) | // Object position (fixed 5V)
     (1L<<25) | // USB communications capable
     (0L<<10) | // 0mA operating
@@ -128,7 +129,7 @@ void send_sink_cap(void)
 #else
   int hdr = PD_HEADER(PD_DATA_SINK_CAP, 0, 0, 0, 1, PD_REV20, 0);
 #endif
-  uint32_t cap = 
+  uint32_t cap =
     (1L<<26) | // USB communications capable
     (0L<<10) | // 0mA operating
     (0L<<0); // 0mA max
@@ -140,6 +141,8 @@ void send_sink_cap(void)
 #endif
 }
 
+int source_cap_timer = 0;
+
 void send_source_cap(void)
 {
   int hdr = PD_HEADER(PD_DATA_SOURCE_CAP, 1, 1, 0, 1, PD_REV20, 0);
@@ -147,7 +150,7 @@ void send_source_cap(void)
 
   fusb302_tcpm_transmit(0, TCPC_TX_SOP, hdr, &cap);
   Serial.print(">SOURCE_CAP\n");
-  STATE(DFP_CONNECTED);
+  source_cap_timer = 0;
 }
 
 void dump_msg(fusb302_rxfifo_tokens sop, int hdr, uint32_t *msg) {
@@ -172,7 +175,7 @@ void dump_msg(fusb302_rxfifo_tokens sop, int hdr, uint32_t *msg) {
       Serial.print("RX ? (");
       break;
   }
-  
+
   Serial.print(len);
   Serial.print(") [");
   Serial.print(hdr, HEX);
@@ -212,7 +215,11 @@ void handle_power_request(uint32_t req) {
   fusb302_tcpm_transmit(0, TCPC_TX_SOP, hdr, NULL);
   Serial.print(">ACCEPT\n");
 
-  hdr = PD_HEADER(PD_CTRL_PS_RDY, 1, 1, 0, 0, PD_REV20, 0);
+  STATE(DFP_ACCEPT);
+}
+
+void send_ps_rdy(void) {
+  int hdr = PD_HEADER(PD_CTRL_PS_RDY, 1, 1, 0, 0, PD_REV20, 0);
   fusb302_tcpm_transmit(0, TCPC_TX_SOP, hdr, NULL);
   Serial.print(">PS_RDY\n");
 
@@ -303,15 +310,26 @@ void evt_packet(void) {
   int hdr, len, ret;
   enum fusb302_rxfifo_tokens sop;
   uint32_t msg[16];
-  
+
   ret = fusb302_tcpm_get_message(0, msg, &hdr, &sop);
   if (ret) {
     // No packet or GoodCRC
     return;
   }
 
-
   handle_msg(sop, hdr, msg);
+}
+
+void evt_sent(void) {
+  switch (st) {
+    case STATE_DFP_VBUS_ON:
+      STATE(DFP_CONNECTED);
+      vdm_fun();
+      break;
+    case STATE_DFP_ACCEPT:
+      send_ps_rdy();
+      break;
+  }
 }
 
 void handle_irq() {
@@ -344,11 +362,16 @@ void handle_irq() {
   if (irqa & TCPC_REG_INTERRUPTA_HARDRESET) {
     Serial.print("IRQ: HARDRESET\n");
     evt_disconnect();
-  }  
+  }
+  if (irqa & TCPC_REG_INTERRUPTA_TX_SUCCESS) {
+    //Serial.print("IRQ: TXSUCCESS\n");
+    evt_sent();
+  }
   if (irqb & TCPC_REG_INTERRUPTB_GCRCSENT) {
+    //Serial.print("IRQ: GCRCSENT\n");
     while(!fusb302_rx_fifo_is_empty(0))
       evt_packet();
-  }  
+  }
 }
 
 void vdm_fun() {
@@ -368,7 +391,7 @@ void vdm_fun() {
   int hdr = PD_HEADER(PD_DATA_VENDOR_DEF, 0, 0, 0, sizeof(vdm) / 4, PD_REV20, 0);
   fusb302_tcpm_transmit(0, TCPC_TX_SOP_DEBUG_PRIME, hdr, vdm);
 #endif
-  Serial.print(">VDM SET ACTION serial -> SBU1/2\n");
+  Serial.print(">VDM serial -> SBU1/2\n");
 
 }
 
@@ -395,11 +418,13 @@ void serial_handler() {
 #endif
       Serial.print(">VDM");
       if (!std_flag)
-        Serial.print("(D)");
+        Serial.print("D");
+#if 1
       for (int i = 0; i <= msg_p; i++) {
         Serial.print(" ");
         Serial.print(msg_buf[i], HEX);
       }
+#endif
       Serial.print("\n");
       msg_p = 0;
       std_flag = 0;
@@ -434,7 +459,7 @@ void state_machine() {
       Serial.print(" cc2=");
       Serial.print(cc2);
       Serial.print("\n");
-      delay(200);
+      delay(100);
       if (cc1 >= 2 || cc2 >= 2)
           evt_dfpconnect();
 #endif
@@ -444,13 +469,19 @@ void state_machine() {
       break;
     }
     case STATE_DFP_VBUS_ON: {
+      if (++source_cap_timer > 37) {
+        send_source_cap();
+      }
       break;
     }
     case STATE_DFP_CONNECTED: {
       break;
     }
+    case STATE_DFP_ACCEPT: {
+      break;
+    }
     case STATE_READY: {
-      vdm_fun();
+      //vdm_fun();
 //#ifndef DFP
       STATE(IDLE);
 //#endif
@@ -491,11 +522,11 @@ void setup() {
   Serial.begin(500000);
 
   pinMode(usb_pd_int_pin, INPUT);
-  digitalWrite(usb_pd_int_pin, HIGH); 
+  digitalWrite(usb_pd_int_pin, HIGH);
   pinMode(debug_led_pin, OUTPUT);
   digitalWrite(debug_led_pin, LOW);
   vbus_off();
-  
+
   Wire.setClock(400000);
   Wire.begin();
 
@@ -511,7 +542,7 @@ void setup() {
 
   Serial.print("Init\n");
   fusb302_tcpm_init(0);
- 
+
   fusb302_pd_reset(0);
   fusb302_tcpm_set_rx_enable(0, 0);
   fusb302_tcpm_set_cc(0, TYPEC_CC_OPEN);
